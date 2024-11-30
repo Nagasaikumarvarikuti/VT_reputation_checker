@@ -1,0 +1,249 @@
+{
+    "definition": {
+        "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+        "contentVersion": "1.0.0.0",
+        "staticResults": {
+            "Entities_-_Get_IPs0": {
+                "status": "Succeeded",
+                "outputs": {
+                    "statusCode": "OK"
+                }
+            }
+        },
+        "triggers": {
+            "Microsoft_Sentinel_incident": {
+                "type": "ApiConnectionWebhook",
+                "inputs": {
+                    "host": {
+                        "connection": {
+                            "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                        }
+                    },
+                    "body": {
+                        "callback_url": "@{listCallbackUrl()}"
+                    },
+                    "path": "/incident-creation"
+                }
+            }
+        },
+        "actions": {
+            "Entities_-_Get_IPs": {
+                "runAfter": {},
+                "type": "ApiConnection",
+                "inputs": {
+                    "host": {
+                        "connection": {
+                            "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                        }
+                    },
+                    "method": "post",
+                    "body": "@triggerBody()?['object']?['properties']?['relatedEntities']",
+                    "path": "/entities/ip"
+                }
+            },
+            "For_each": {
+                "foreach": "@body('Entities_-_Get_IPs')?['IPs']",
+                "actions": {
+                    "Condition": {
+                        "actions": {
+                            "Appends_Malicious_IPs_to_Malicious_IP_table": {
+                                "type": "AppendToStringVariable",
+                                "inputs": {
+                                    "name": "malicious_ip",
+                                    "value": "<tr><td>@{item()?['Address']}</td><td>@{body('Get_an_IP_report')?['data']?['attributes']?['last_analysis_stats']?['malicious']}</td><td>@{body('Get_an_IP_report')?['data']?['attributes']?['tags']}</td><td>@{body('Get_an_IP_report')?['data']?['attributes']?['country']}</td></tr>"
+                                }
+                            }
+                        },
+                        "runAfter": {
+                            "Get_an_IP_report": [
+                                "Succeeded"
+                            ]
+                        },
+                        "else": {
+                            "actions": {
+                                "Append_Clean_IPs_to_Clean_IP_table": {
+                                    "type": "AppendToStringVariable",
+                                    "inputs": {
+                                        "name": "clean_ips",
+                                        "value": "<tr><td>@{item()?['Address']}</td><td>@{body('Get_an_IP_report')?['data']?['attributes']?['last_analysis_stats']?['malicious']}</td><td>@{body('Get_an_IP_report')?['data']?['attributes']?['tags']}</td><td>@{body('Get_an_IP_report')?['data']?['attributes']?['country']}</td></tr>"
+                                    }
+                                }
+                            }
+                        },
+                        "expression": {
+                            "and": [
+                                {
+                                    "greaterOrEquals": [
+                                        "@body('Get_an_IP_report')?['data']?['attributes']?['last_analysis_stats']?['malicious']",
+                                        3
+                                    ]
+                                }
+                            ]
+                        },
+                        "type": "If"
+                    },
+                    "Get_an_IP_report": {
+                        "type": "ApiConnection",
+                        "inputs": {
+                            "host": {
+                                "connection": {
+                                    "name": "@parameters('$connections')['virustotal']['connectionId']"
+                                }
+                            },
+                            "method": "get",
+                            "path": "/api/v3/ip_addresses/connectorV2/@{encodeURIComponent(item()?['Address'])}"
+                        }
+                    }
+                },
+                "runAfter": {
+                    "Clean_IP_table": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "Foreach"
+            },
+            "Malicious_IP_table": {
+                "runAfter": {
+                    "Entities_-_Get_IPs": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "InitializeVariable",
+                "inputs": {
+                    "variables": [
+                        {
+                            "name": "malicious_ip",
+                            "type": "string",
+                            "value": "<p><img src='https://www.liblogo.com/img-logo/vi5728fd3f-virustotal-logo-file-virustotal-logo-svg-liblogo.png' alt='VirusTotal Logo' width='150'/></p><table><tr><th>IP Address</th><th>Reputation</th><th>Tags</th><th>Country</th></tr>"
+                        }
+                    ]
+                }
+            },
+            "Final_malicious_IPs": {
+                "runAfter": {
+                    "For_each": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "InitializeVariable",
+                "inputs": {
+                    "variables": [
+                        {
+                            "name": "final_malicious_table",
+                            "type": "string",
+                            "value": "@concat(variables('malicious_ip'),'</table>')"
+                        }
+                    ]
+                }
+            },
+            "Clean_IP_table": {
+                "runAfter": {
+                    "Malicious_IP_table": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "InitializeVariable",
+                "inputs": {
+                    "variables": [
+                        {
+                            "name": "clean_ips",
+                            "type": "string",
+                            "value": "<p><img src='https://www.liblogo.com/img-logo/vi5728fd3f-virustotal-logo-file-virustotal-logo-svg-liblogo.png' alt='VirusTotal Logo' width='150'/></p><table><tr><th>IP Address</th><th>Reputation</th><th>Tags</th><th>Country</th></tr>"
+                        }
+                    ]
+                }
+            },
+            "Final_clean_IPs": {
+                "runAfter": {
+                    "Final_malicious_IPs": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "InitializeVariable",
+                "inputs": {
+                    "variables": [
+                        {
+                            "name": "final_clean_table",
+                            "type": "string",
+                            "value": "@concat(variables('clean_ips'),'</table>')"
+                        }
+                    ]
+                }
+            },
+            "Comments_Malicious_IP_table": {
+                "runAfter": {
+                    "Comments_clean_IP_table": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "ApiConnection",
+                "inputs": {
+                    "host": {
+                        "connection": {
+                            "name": "@parameters('$connections')['azuresentinel-3']['connectionId']"
+                        }
+                    },
+                    "method": "post",
+                    "body": {
+                        "incidentArmId": "@triggerBody()?['object']?['id']",
+                        "message": "<p class=\"editor-paragraph\"><b><strong class=\"editor-text-bold\">Malicious IPs are: </strong></b>@{variables('final_malicious_table')}</p>"
+                    },
+                    "path": "/Incidents/Comment"
+                }
+            },
+            "Comments_clean_IP_table": {
+                "runAfter": {
+                    "Final_clean_IPs": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "ApiConnection",
+                "inputs": {
+                    "host": {
+                        "connection": {
+                            "name": "@parameters('$connections')['azuresentinel-3']['connectionId']"
+                        }
+                    },
+                    "method": "post",
+                    "body": {
+                        "incidentArmId": "@triggerBody()?['object']?['id']",
+                        "message": "<p class=\"editor-paragraph\"><b><strong class=\"editor-text-bold\">Clean IPs are: </strong></b>@{variables('final_clean_table')}</p>"
+                    },
+                    "path": "/Incidents/Comment"
+                }
+            }
+        },
+        "parameters": {
+            "$connections": {
+                "type": "Object",
+                "defaultValue": {}
+            }
+        }
+    },
+    "parameters": {
+        "$connections": {
+            "value": {
+                "azuresentinel": {
+                    "id": "/subscriptions/668b320b-ac0c-4a5f-a647-f1d5058f4866/providers/Microsoft.Web/locations/centralindia/managedApis/azuresentinel",
+                    "connectionId": "/subscriptions/668b320b-ac0c-4a5f-a647-f1d5058f4866/resourceGroups/Test-Resourcegroup/providers/Microsoft.Web/connections/azuresentinel-Virustotal_IPreputation",
+                    "connectionName": "azuresentinel-Virustotal_IPreputation",
+                    "connectionProperties": {
+                        "authentication": {
+                            "type": "ManagedServiceIdentity"
+                        }
+                    }
+                },
+                "virustotal": {
+                    "id": "/subscriptions/668b320b-ac0c-4a5f-a647-f1d5058f4866/providers/Microsoft.Web/locations/centralindia/managedApis/virustotal",
+                    "connectionId": "/subscriptions/668b320b-ac0c-4a5f-a647-f1d5058f4866/resourceGroups/Test-Resourcegroup/providers/Microsoft.Web/connections/virustotal",
+                    "connectionName": "virustotal"
+                },
+                "azuresentinel-3": {
+                    "id": "/subscriptions/668b320b-ac0c-4a5f-a647-f1d5058f4866/providers/Microsoft.Web/locations/centralindia/managedApis/azuresentinel",
+                    "connectionId": "/subscriptions/668b320b-ac0c-4a5f-a647-f1d5058f4866/resourceGroups/Test-Resourcegroup/providers/Microsoft.Web/connections/azuresentinel-3",
+                    "connectionName": "azuresentinel-3"
+                }
+            }
+        }
+    }
+}
